@@ -3,6 +3,7 @@ from twilio.twiml.voice_response import VoiceResponse
 
 app = Flask(__name__)
 
+# Sample blacklisted numbers
 KNOWN_SPAM_LIST = ["+18005550199", "+919876543210"]
 
 @app.route("/voice-incoming", methods=['POST'])
@@ -11,16 +12,18 @@ def handle_incoming_call():
     caller_number = request.form.get('From')
     response = VoiceResponse()
 
-    print(f"📞 Incoming Call Connecting: {caller_number}")
+    print(f"\n📞 Incoming Call Connecting: {caller_number}")
 
     # Check caller against database during connection handshake
     if caller_number in KNOWN_SPAM_LIST:
         print(f"🚨 CRITICAL: Intercepted Scam Call from {caller_number}")
-        # Reject the call before it rings through to the user
+        # Reject the call automatically before it connects
         response.reject(reason='busy')
     else:
         print("✅ Safe caller. Connecting call...")
-        response.say("Connecting your call. Please hold.")
+        response.say("Connecting your call. Please wait.")
+        # To forward the call to a real phone, uncomment the next line:
+        # response.dial('+1234567890')
 
     return str(response)
 
