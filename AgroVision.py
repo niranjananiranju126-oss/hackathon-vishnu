@@ -1,99 +1,76 @@
-import streamlit as st
-import numpy as np
-import pandas as pd
-from datetime import datetime
-from PIL import Image
+import re
+import time
+import speech_recognition as sr
 
-# Page Configuration
-st.set_page_config(page_title="AgroVision AI", page_icon="🌱", layout="wide")
+# Weighted keyword dictionary mapping high-risk scam triggers to threat scores
+SCAM_TRIGGERS = {
+    "one time password": 40,
+    "otp": 35,
+    "bank account suspended": 35,
+    "verify your identity": 25,
+    "cvv": 35,
+    "gift card": 40,
+    "police warrant": 35,
+    "lottery prize": 30,
+    "wire transfer": 30,
+    "urgent action required": 25,
+    "department of revenue": 25,
+    "credit card number": 35,
+    "blocked": 15,
+}
 
-st.title("🌱 AgroVision — Real-Time Smart Agriculture Dashboard")
-st.caption("Technology for a Better Society | CREZIA 2026")
+def calculate_scam_score(transcript: str):
+    """Calculates cumulative risk score and returns detected trigger phrases."""
+    text_lower = transcript.lower()
+    total_score = 0
+    matched_phrases = []
 
-# Navigation Sidebar
-st.sidebar.header("Navigation")
-page = st.sidebar.radio("Select View", ["Real-Time Sensor Monitoring", "Leaf Disease Diagnosis"])
+    for phrase, weight in SCAM_TRIGGERS.items():
+        # Match whole words/phrases to prevent false positives
+        if re.search(r'\b' + re.escape(phrase) + r'\b', text_lower):
+            total_score += weight
+            matched_phrases.append(phrase)
 
-# ----------------------------------------------------
-# PAGE 1: REAL-TIME SENSOR MONITORING
-# ----------------------------------------------------
-if page == "Real-Time Sensor Monitoring":
-    st.header("⚡ Live Field Telemetry")
+    # Cap threat score at 100%
+    return min(total_score, 100), matched_phrases
+
+def monitor_call_audio():
+    recognizer = sr.Recognizer()
+    recognizer.energy_threshold = 300  # Adjusts microphone sensitivity
     
-    col_ctrl1, col_ctrl2 = st.columns(2)
-    with col_ctrl1:
-        crop_name = st.selectbox("Select Active Field Crop", ["Tomato", "Potato", "Corn", "Wheat"])
-    with col_ctrl2:
-        update_interval = st.slider("Sensor Refresh Interval (seconds)", 1, 5, 2)
+    # Initialize Microphone Stream
+    with sr.Microphone() as source:
+        print("=== [SCAM SHIELD] Call Monitoring Active ===")
+        print("Listening for incoming audio feed...\n")
+        recognizer.adjust_for_ambient_noise(source, duration=1)
 
-    if "live_data" not in st.session_state:
-        st.session_state.live_data = pd.DataFrame(columns=["Time", "Soil Moisture (%)", "Temperature (°C)"])
-
-    @st.fragment(run_every=update_interval)
-    def render_realtime_metrics():
-        now_str = datetime.now().strftime("%H:%M:%S")
-        new_moisture = float(np.random.randint(30, 70))
-        new_temp = float(np.random.randint(24, 34))
-
-        new_row = pd.DataFrame([{
-            "Time": now_str,
-            "Soil Moisture (%)": new_moisture,
-            "Temperature (°C)": new_temp
-        }])
-
-        st.session_state.live_data = pd.concat([st.session_state.live_data, new_row], ignore_index=True).tail(15)
-
-        m1, m2, m3 = st.columns(3)
-        m1.metric(label="Current Moisture", value=f"{new_moisture:.0f}%", delta=f"{np.random.choice([-2, -1, 0, 1, 2])}%")
-        m2.metric(label="Field Temperature", value=f"{new_temp:.0f} °C", delta=f"{np.random.choice([-1, 0, 1])} °C")
-        m3.metric(label="Connection Status", value="ONLINE 🟢", delta="Live Feed")
-
-        st.subheader(f"📊 Live Telemetry Stream ({crop_name})")
-        chart_df = st.session_state.live_data.set_index("Time")
-        st.line_chart(chart_df)
-
-        if new_moisture < 38:
-            st.error(f"🚨 **Critical Alert:** Soil moisture dropped to {new_moisture:.0f}%. Automatic irrigation pump engaged!")
-        elif new_moisture > 62:
-            st.warning(f"⚠️ **Caution:** Soil moisture reached {new_moisture:.0f}%. Halting pump to prevent overwatering.")
-        else:
-            st.success("✅ **Optimal Field Status:** Moisture and temperature levels are stable.")
-
-    render_realtime_metrics()
-
-# ----------------------------------------------------
-# PAGE 2: LEAF DISEASE DIAGNOSIS (COMPUTER VISION)
-# ----------------------------------------------------
-elif page == "Leaf Disease Diagnosis":
-    st.header("🔍 AI Leaf Disease Diagnosis")
-    st.write("Upload an image of a leaf to run pixel-level color and texture feature analysis.")
-    
-    uploaded_file = st.file_uploader("Upload leaf image...", type=["jpg", "png", "jpeg"])
-    
-    if uploaded_file is not None:
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            image = Image.open(uploaded_file)
-            st.image(image, caption="Uploaded Leaf Specimen", use_container_width=True)
-            
-        with col2:
-            st.subheader("🤖 Computer Vision Analysis")
-            with st.spinner("Extracting color histograms and anomaly features..."):
-                # Convert image to array to analyze pixel distributions
-                img_array = np.array(image.resize((100, 100)))
-                avg_color = img_array.mean(axis=(0, 1))
+        while True:
+            try:
+                # Capture short audio chunks (4-second windows for real-time response)
+                audio_data = recognizer.listen(source, phrase_time_limit=4)
+                transcript = recognizer.recognize_google(audio_data)
                 
-                # Simple heuristic based on brown/yellow spot discoloration versus green healthy leaf
-                # Green channel dominance usually implies healthy leaves; brown/dark spots lower the green ratio
-                green_ratio = avg_color[1] / (np.sum(avg_color) + 1e-5)
-                
-                st.write("---")
-                if green_ratio < 0.35:
-                    st.error("⚠️ **Diagnosis Result:** Early Blight / Fungal Spot Detected")
-                    st.metric(label="Infection Severity Score", value="89.4%")
-                    st.warning("💡 **Recommended Action:** Apply organic copper-based fungicide and remove infected foliage.")
-                else:
-                    st.success("✅ **Diagnosis Result:** Healthy Plant Leaf")
-                    st.metric(label="Confidence Score", value="96.2%")
-                    st.info("💡 **Recommended Action:** Leaf chlorophyll levels are optimal. No treatment needed.")
+                print(f"Transcribed Audio: \"{transcript}\"")
+                risk_score, triggers = calculate_scam_score(transcript)
+
+                # Alert threshold triggering
+                if risk_score >= 50:
+                    print("\n" + "="*50)
+                    print(f"🚨 [HIGH RISK SCAM ALERT] Score: {risk_score}%")
+                    print(f"⚠️ Detected Threat Triggers: {', '.join(triggers)}")
+                    print("🛑 ACTION REQUIRED: Do NOT share OTPs, passwords, or personal details!")
+                    print("="*50 + "\n")
+                elif risk_score > 0:
+                    print(f"ℹ️ [Caution] Suspicious term detected: {triggers} (Risk: {risk_score}%)\n")
+
+            except sr.UnknownValueError:
+                # Continuous loop: ignore background silence or unintelligible speech
+                pass
+            except sr.RequestError as e:
+                print(f"STT Service Error: {e}")
+            except KeyboardInterrupt:
+                print("\nMonitoring stopped.")
+                break
+
+if __name__ == "__main__":
+    monitor_call_audio()
