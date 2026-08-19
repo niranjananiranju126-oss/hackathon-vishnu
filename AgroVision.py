@@ -1,126 +1,74 @@
-import io
-import re
+import time
+import requests
 import streamlit as st
-import speech_recognition as sr
 
-# ---------------------------------------------------------
-# 1. PAGE & STYLING CONFIGURATION
-# ---------------------------------------------------------
-st.set_page_config(
-    page_title="ScamGuard - Real-Time Call Scam Detector",
-    page_icon="🛡️",
-    layout="wide"
-)
+# Page Configuration
+st.set_page_config(page_title="Real-Time Call Threat Detector", page_icon="📞", layout="centered")
 
-st.title("🛡️ ScamGuard: Real-Time Call Threat Analyzer")
-st.caption("AI-powered voice call monitoring to protect users against phishing and financial scams.")
+st.title("📞 Incoming Call Scam Detector")
+st.caption("Simulate or receive live incoming calls to evaluate scam risk based on number metadata.")
 
-# ---------------------------------------------------------
-# 2. SCAM KEYWORDS & THREAT WEIGHTS
-# ---------------------------------------------------------
-SCAM_TRIGGERS = {
-    "otp": 40,
-    "one time password": 40,
-    "bank account suspended": 35,
-    "verify your identity": 25,
-    "cvv": 35,
-    "credit card": 30,
-    "gift card": 40,
-    "police warrant": 35,
-    "lottery prize": 35,
-    "wire transfer": 30,
-    "urgent action required": 25,
-    "department of revenue": 30,
-    "blocked": 15,
+# Simulated Blacklist Database (For offline demo)
+KNOWN_SPAM_DATABASE = {
+    "+18005550199": {"reports": 450, "category": "Bank Phishing Fraud", "risk": 95},
+    "+919876543210": {"reports": 120, "category": "Lottery / KYC Scam", "risk": 85},
+    "+442079460912": {"reports": 15, "category": "Robocall Tech Support", "risk": 60},
 }
 
-def analyze_transcript(transcript: str):
-    """Calculates threat score based on keyword matches and returns detected triggers."""
-    text_lower = transcript.lower()
-    matched = []
-    score = 0
+def analyze_phone_number(phone_number: str):
+    """Analyzes phone number against local databases and metadata patterns."""
+    clean_number = phone_number.strip().replace(" ", "")
     
-    for phrase, weight in SCAM_TRIGGERS.items():
-        if re.search(r'\b' + re.escape(phrase) + r'\b', text_lower):
-            matched.append(phrase)
-            score += weight
-            
-    final_score = min(score, 100)
-    return final_score, matched
+    # Check 1: Known Scam Database Lookup
+    if clean_number in KNOWN_SPAM_DATABASE:
+        data = KNOWN_SPAM_DATABASE[clean_number]
+        return data["risk"], f"Flagged in database ({data['reports']} user reports for {data['category']})", "HIGH"
+    
+    # Check 2: Pattern & Line-Type Analysis Rules
+    # VoIP, Toll-Free, or invalid country formats often carry elevated fraud risks
+    if clean_number.startswith("+1800") or clean_number.startswith("+1888"):
+        return 55, "Toll-Free line: Potential spoofed corporate caller.", "MEDIUM"
+    
+    if len(clean_number) < 10 or not clean_number.startswith("+"):
+        return 75, "Suspicious formatting or missing international country code.", "HIGH"
+        
+    # Default Safe Result
+    return 10, "Clean number. No reported scam records found.", "LOW"
 
-def process_audio_file(audio_bytes):
-    """Transcribes audio bytes into text using Google Speech Recognition."""
-    recognizer = sr.Recognizer()
-    try:
-        audio_file = io.BytesIO(audio_bytes)
-        with sr.AudioFile(audio_file) as source:
-            audio_data = recognizer.record(source)
-            transcript = recognizer.recognize_google(audio_data)
-            return transcript, None
-    except sr.UnknownValueError:
-        return None, "Speech was unintelligible or silent. Please try speaking clearly."
-    except sr.RequestError as e:
-        return None, f"Speech Recognition API Error: {e}"
-    except Exception as e:
-        return None, f"Error reading audio file format: {e}"
+# --- USER INTERFACE ---
+st.subheader("📲 Incoming Call Simulator")
 
-# ---------------------------------------------------------
-# 3. USER INTERFACE (LIVE MIC + FILE UPLOAD)
-# ---------------------------------------------------------
-tab1, tab2 = st.tabs(["🎤 Live Mic Capture", "📁 Upload Call Recording"])
+incoming_number = st.text_input(
+    "Incoming Phone Number:", 
+    value="+18005550199", 
+    help="Enter a phone number with country code (e.g., +18005550199 or +919876543210)"
+)
 
-audio_source = None
-
-with tab1:
-    st.write("Record spoken audio directly through your web browser:")
-    # Native Streamlit Microphone Widget
-    mic_audio = st.audio_input("Record Call Audio")
-    if mic_audio:
-        audio_source = mic_audio.read()
-
-with tab2:
-    st.write("Upload a pre-recorded call audio file (.wav format recommended):")
-    uploaded_file = st.file_uploader("Choose a WAV audio file", type=["wav"])
-    if uploaded_file:
-        audio_source = uploaded_file.read()
-
-# ---------------------------------------------------------
-# 4. PROCESSING & NOTIFICATION ALERTS
-# ---------------------------------------------------------
-if audio_source is not None:
+if st.button("Simulate Incoming Call"):
+    with st.spinner("Incoming call ringing... Fetching caller metadata..."):
+        time.sleep(1)  # Simulate network latency
+        
+    risk_score, reason, severity = analyze_phone_number(incoming_number)
+    
     st.write("---")
-    st.subheader("🔍 Analysis Output")
     
-    with st.spinner("Processing audio and scanning for scam patterns..."):
-        transcript, error = process_audio_file(audio_source)
-
-    if error:
-        st.error(f"⚠️ {error}")
+    # --- CRITICAL THREAT NOTIFICATIONS ---
+    if severity == "HIGH":
+        st.error(f"🚨 **CRITICAL ALERT: HIGH RISK SCAM CALL!**")
+        st.toast("🚨 ALERT: Incoming Scam Call Detected!", icon="🛑")
+        st.metric(label="Threat Risk Score", value=f"{risk_score}%", delta="CRITICAL", delta_color="inverse")
+        st.warning(f"⚠️ **Reason:** {reason}")
+        st.info("🛑 **Recommended Action:** Decline call immediately or do not share sensitive information.")
+        
+    elif severity == "MEDIUM":
+        st.warning(f"⚠️ **CAUTION: SUSPICIOUS CALLER**")
+        st.toast("⚠️ Warning: Suspicious caller detected.", icon="⚠️")
+        st.metric(label="Threat Risk Score", value=f"{risk_score}%", delta="SUSPICIOUS", delta_color="off")
+        st.write(f"**Details:** {reason}")
+        st.info("💡 **Recommended Action:** Verify the identity of the caller before sharing details.")
+        
     else:
-        st.write(f"**Speech Transcript:** *\"{transcript}\"*")
-        
-        risk_score, matched_triggers = analyze_transcript(transcript)
-        
-        # Threat level progress bar
-        st.write(f"**Calculated Threat Risk:** `{risk_score}%`")
-        st.progress(risk_score / 100)
-
-        # TRIGGER NOTIFICATIONS BASED ON RISK LEVEL
-        if risk_score >= 50:
-            # High-Level Alert
-            st.error("🚨 **CRITICAL ALERT: HIGH RISK SCAM DETECTED!**")
-            st.toast("🚨 ALERT: High Risk Scam Call Detected!", icon="🛑")
-            st.warning(f"⚠️ **Detected Suspicious Phrase Triggers:** {', '.join(matched_triggers)}")
-            st.info("💡 **Security Advice:** End the call immediately! Do NOT disclose OTPs, PINs, or financial info.")
-            
-        elif risk_score >= 25:
-            # Medium-Level Caution Alert
-            st.warning("⚠️ **WARNING: SUSPICIOUS ACTIVITY DETECTED**")
-            st.toast("⚠️ Warning: Suspicious call pattern detected.", icon="⚠️")
-            st.write(f"**Flagged Keywords:** {', '.join(matched_triggers)}")
-            
-        else:
-            # Low Risk Confirmation
-            st.success("✅ **CALL APPEARS SAFE**")
-            st.toast("✅ Call analyzed. No threat patterns found.", icon="✅")
-            st.write("No high-risk financial or urgency phrases were found in this audio sample.")
+        st.success(f"✅ **SAFE CALLER DETECTED**")
+        st.toast("✅ Incoming call checked. Safe to answer.", icon="✅")
+        st.metric(label="Threat Risk Score", value=f"{risk_score}%", delta="SAFE")
+        st.write(f"**Details:** {reason}")
