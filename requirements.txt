@@ -1,2 +1,5 @@
 streamlit
-SpeechRecognition
+pandas
+requests
+twilio
+flask
