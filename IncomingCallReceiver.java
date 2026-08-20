@@ -1,39 +1,49 @@
-package com.hackathon.scamshield;
+package com.scamshield.ai;
 
-import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.content.Intent;
-import android.telephony.TelephonyManager;
-import android.widget.Toast;
+import android.telecom.Call;
+import android.telecom.CallScreeningService;
+import android.util.Log;
 
-public class IncomingCallReceiver extends BroadcastReceiver {
-    
-    // Sample offline database of high-risk reported numbers
-    private static final String[] SPAM_NUMBERS = {"+18005550199", "+919876543210"};
+public class IncomingCallReceiver extends CallScreeningService {
+
+    private static final String TAG = "ScamShieldAI";
+
+    // Known malicious numbers for testing (Can be fetched dynamically from app.py / API)
+    private static final String[] BLACKLIST = {"+18005550199", "+18001234567"};
 
     @Override
-    public void onReceive(Context context, Intent intent) {
-        String state = intent.getStringExtra(TelephonyManager.EXTRA_STATE);
-
-        // Triggers instantly when the device starts RINGING
-        if (TelephonyManager.EXTRA_STATE_RINGING.equals(state)) {
-            String incomingNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER);
+    public void onScreenCall(Call.Details callDetails) {
+        if (callDetails.getCallDirection() == Call.Details.DIRECTION_INCOMING) {
             
-            if (incomingNumber != null) {
-                boolean isSpam = checkIsSpam(incomingNumber);
-                
-                if (isSpam) {
-                    // Display system-level pop-up notification over the call screen
-                    Toast.makeText(context, "🚨 ALERT: High Risk Scam Call from " + incomingNumber, Toast.LENGTH_LONG).show();
-                    // Here you can trigger a custom HUD Overlay Activity or ring-tone mute
-                }
+            // Extract the incoming phone number
+            String incomingNumber = callDetails.getHandle().getSchemeSpecificPart();
+            Log.d(TAG, "Incoming call detected from: " + incomingNumber);
+
+            // Check if incoming number is blacklisted
+            if (isBlacklisted(incomingNumber)) {
+                Log.w(TAG, "BLOCKED SPAM CALL: " + incomingNumber);
+
+                // Build a response that rejects the call before the phone rings
+                CallResponse response = new CallResponse.Builder()
+                        .setDisallowCall(true)        // Block call
+                        .setRejectCall(true)          // Decline incoming ring
+                        .setSkipNotification(false)   // Show "Blocked by ScamShield" alert
+                        .build();
+
+                respondToCall(callDetails, response);
+            } else {
+                // Allow safe calls to pass through normally
+                Log.i(TAG, "PASSED SAFE CALL: " + incomingNumber);
+                respondToCall(callDetails, new CallResponse.Builder().build());
             }
         }
     }
 
-    private boolean checkIsSpam(String number) {
-        for (String spamNum : SPAM_NUMBERS) {
-            if (spamNum.equals(number)) return true;
+    private boolean isBlacklisted(String number) {
+        for (String spamNumber : BLACKLIST) {
+            if (number.contains(spamNumber)) {
+                return true;
+            }
         }
         return false;
     }
